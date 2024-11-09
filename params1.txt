@@ -86,3 +86,5 @@ Psi.slope.Vmax	0.25
 Psi.slope.uptake	0.5
 output.mid	0
 print.grid	30
+Enz_repress	1
+Upt_repress	1
