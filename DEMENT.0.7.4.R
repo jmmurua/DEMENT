@@ -333,7 +333,8 @@ RunPulse <- function(
                         dimnames = list(Mon.names.G, Mic.names))
   TUC.mat <- TUN.mat <- TUP.mat <- matrix(rep(0, grid.size*n_taxa*n_monomers), 
                                           nrow = n_monomers)
-  #DOC.mat <- DON.mat <- DOP.mat <- matrix(rep(0, grid.size*n_monomers), nrow = n_monomers)
+  DOC.mat <- DON.mat <- DOP.mat <- matrix(rep(0, grid.size*n_monomers), nrow = n_monomers)
+  Microbe.C.cell <- Microbe.N.cell <- Microbe.P.cell <- matrix(rep(0, grid.size*n_taxa), nrow = n_taxa)
   EP.mat <- matrix(rep(0, grid.size*n_taxa*n_enzymes),
                    nrow = n_taxa,
                    dimnames = list(Mic.names, rownames(Enzymes)))
@@ -341,6 +342,10 @@ RunPulse <- function(
                       nrow = n_taxa)
   DeadEnz.mat <- matrix(rep(0, grid.size*n_enzymes*3), 
                         nrow = n_enzymes)
+  Resp.comp <- matrix(rep(0, 3), ncol = 3, 
+                      dimnames = list(NULL, c("Maint", "Growth", "Overflow")))
+  Mic.growth <- matrix(rep(0, 3), ncol = 3, 
+                       dimnames = list(NULL, c("C", "N", "P")))
   
   # Create index for matrix manipulation of taxon uptake
   # index1 is the shape of the starting matrix
@@ -392,11 +397,15 @@ RunPulse <- function(
   
   # Initialize the time series of data to hold
   RespSeries <- 0
+  Resp.compSeries <- 0
   C.UptakeSeries <- 0
   N.UptakeSeries <- 0
   P.UptakeSeries <- 0
   N.MonomerUptakeSeries <- 0
+  Mic.growthSeries <- 0
   Net.CUE_Series <- 0
+  N.mineralSeries <- 0
+  P.mineralSeries <- 0
   Cum_Leaching_N <- 0
   Cum_Leaching_P <- 0
   EnzymesSeries <- t(Enzymes.grid[, "C"])
@@ -560,7 +569,7 @@ RunPulse <- function(
     MonomerRatios[org, ] <- Monomers[org, ]/rsm[org]
     MonomerRatios[org, ][rsm[org] == 0, ] <- 0
     
-    # 
+
     # DOC.mat[,] <- Monomers[,"C"][matrix(1:(grid.size*n_monomers), ncol = grid.size)]
     # DON.mat[,] <- Monomers[,"N"][matrix(1:(grid.size*n_monomers), ncol = grid.size)]
     # DOP.mat[,] <- Monomers[,"P"][matrix(1:(grid.size*n_monomers), ncol = grid.size)]
@@ -568,7 +577,15 @@ RunPulse <- function(
     # DOC <- colSums(DOC.mat)
     # DON <- colSums(DON.mat)
     # DOP <- colSums(DOP.mat)
-    
+    # 
+    # Microbe.C.cell[,] <- Microbes[,"C"][matrix(1:(grid.size*n_taxa), ncol = grid.size)]
+    # Microbe.N.cell[,] <- Microbes[,"N"][matrix(1:(grid.size*n_taxa), ncol = grid.size)]
+    # Microbe.P.cell[,] <- Microbes[,"P"][matrix(1:(grid.size*n_taxa), ncol = grid.size)]
+    # 
+    # 
+    # DOC/(colSums(Microbe.C.cell) + 10^-10)
+    # DON/(colSums(Microbe.N.cell) + 10^-10)
+    # DOP/(colSums(Microbe.P.cell) + 10^-10)
     
     # Section for modulating the uptake allocation based on uptake of the previous
     # time step. The higher the uptake for a given element, the lower the 
@@ -585,57 +602,6 @@ RunPulse <- function(
     P.up.pc <- (Taxon_Uptake_P/(Microbes[,"C"] + 10^-10))/(params["P_min",])
     NP.up.pc <- apply(cbind(N.up.pc, P.up.pc), 1, min) # Selecting the lowest between N and P
     
-    # Estimation of CUE per taxa per grid box
-    CUE.u <- CUE.ref
-    
-    # Estimating TER as a metric of optimal uptake
-    TER <- data.frame(
-      CN = (Microbes[,"C"]/Microbes[,"N"])/CUE.u,
-      CP = (Microbes[,"C"]/Microbes[,"P"])/CUE.u,
-      NP = (Microbes[,"N"]/Microbes[,"P"])
-    )
-    
-    # Actual uptake ratios
-    Upt.rat <- data.frame(
-      CN = (Taxon_Uptake_C/Taxon_Uptake_N),
-      CP = (Taxon_Uptake_C/Taxon_Uptake_P),
-      NP = (Taxon_Uptake_N/Taxon_Uptake_P)
-    )
-    
-    # Difference between actual uptake and optimal uptake
-    TER.diff <- data.frame(
-      CN = Upt.rat$CN - TER$CN,
-      CP = Upt.rat$CP - TER$CP,
-      NP = Upt.rat$NP - TER$NP
-    )
-    
-    # Determine the limiting nutrient
-    CN.lim <- c("0" = "C", "1" = "N")
-    CP.lim <- c("0" = "C", "1" = "P")
-    NP.lim <- c("0" = "N", "1" = "P")
-    CNP.lim <- c("C" = 1, "N" = 2, "P" = 3)
-    
-    Lim.up <- data.frame(CN.lim = CN.lim[as.character(as.numeric((TER.diff > 0)[,1]))],
-                         CP.lim = CP.lim[as.character(as.numeric((TER.diff > 0)[,2]))],
-                         NP.lim = NP.lim[as.character(as.numeric((TER.diff > 0)[,3]))])
-    
-    Lim.up2 <- unlist(apply(Lim.up, MARGIN = 1, FUN = function(x) if(any(is.na(x))){NA}else{names(table(x)[table(x) == 2])}))
-    
-    # Calculating uptake adjustments based on the limiting element
-    
-    
-    C.adj <- apply(data.frame(C = 1, N = TER$CN/Upt.rat$CN, P = TER$CP/Upt.rat$CP, Lim = Lim.up2), MARGIN = 1, FUN = function(x) if(is.na(x[4])){1}else{x[CNP.lim[x[4]]]})
-    C.adj <- apply(data.frame(C = 1, N = 1, P = 1, Lim = Lim.up2), MARGIN = 1, FUN = function(x) if(is.na(x[4])){1}else{x[CNP.lim[x[4]]]})
-    N.adj <- apply(data.frame(C = Upt.rat$CN/TER$CN, N = 1, P = TER$NP/Upt.rat$NP, Lim = Lim.up2), MARGIN = 1, FUN = function(x) if(is.na(x[4])){1}else{x[CNP.lim[x[4]]]})
-    P.adj <- apply(data.frame(C = Upt.rat$CP/TER$CP, N = Upt.rat$NP/TER$NP, P = 1, Lim = Lim.up2), MARGIN = 1, FUN = function(x) if(is.na(x[4])){1}else{x[CNP.lim[x[4]]]})
-    NP.adj <- apply(cbind(N.adj, P.adj), 1, max) # The most limiting between N and P is selected
-    
-    Upt.repres.l <- list(
-      C = as.numeric(C.adj),
-      N = as.numeric(N.adj),
-      P = as.numeric(P.adj),
-      NP = as.numeric(NP.adj)
-    )
     
     # C.adj <- 1 - (exp(-7*(C.up.pc - 0.3))) / (1 + exp(-7*(C.up.pc - 0.3)))
     # N.adj <- 1 - (exp(-7*(C.up.pc - 0.3))) / (1 + exp(-7*(C.up.pc - 0.3)))
@@ -648,12 +614,12 @@ RunPulse <- function(
     #   NP = round(((exp(-10*(NP.up.pc - 0.5)) + 0.01) / (1 + exp(-10*(NP.up.pc - 0.5)))), digits = 4)  # Old rep(1, length(Taxon_Uptake_N))
     # )
     
-    # Upt.repres.l <- list(
-    #   C = round((exp(-12*(C.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(C.up.pc - 0.75) )), digits = 4),
-    #   N = round((exp(-12*(N.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(N.up.pc - 0.75) )), digits = 4),
-    #   P = round((exp(-12*(P.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(P.up.pc - 0.75) )), digits = 4),
-    #   NP = round((exp(-12*(NP.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(NP.up.pc - 0.75) )), digits = 4)  # Old rep(1, length(Taxon_Uptake_N))
-    # )
+    Upt.repres.l <- list(
+      C = round((exp(-12*(C.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(C.up.pc - 0.75) )), digits = 4),
+      N = round((exp(-12*(N.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(N.up.pc - 0.75) )), digits = 4),
+      P = round((exp(-12*(P.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(P.up.pc - 0.75) )), digits = 4),
+      NP = round((exp(-12*(NP.up.pc - 0.75)) - 0.01) / (1 + exp(-12*(NP.up.pc - 0.75) )), digits = 4)  # Old rep(1, length(Taxon_Uptake_N))
+    )
     
     # Upt.repres.l2 <- list(
     #  C = Upt.repres.l$C/(Upt.repres.l$C + Upt.repres.l$N + Upt.repres.l$P),
@@ -782,6 +748,10 @@ RunPulse <- function(
     Microbes[, "N"] <- Microbes[, "N"] + Taxon_Uptake_N - Enzyme_Cost_N
     Microbes[, "P"] <- Microbes[, "P"] + Taxon_Uptake_P - Enzyme_Cost_P
     
+    Mic.growth[, "C"] <- sum(Taxon_Uptake_C*CUE - Enzyme_Cost - Uptake_Maint)
+    Mic.growth[, "N"] <- sum(Taxon_Uptake_N - Enzyme_Cost_N)
+    Mic.growth[, "P"] <- sum(Taxon_Uptake_P - Enzyme_Cost_P)
+    
     # Kill microbes that are starving and transfer biomass to substrate
     Death <- Colonization.reset
     if (is.na(sum(Microbes))) {break}
@@ -870,6 +840,13 @@ RunPulse <- function(
     Monomers1 <- Monomers # Snapshot of monomers before uptake
     Monomers <- Monomers - Monomer_Uptake
     
+    # Rates of mineralization. Respiration is separated by components
+    Resp.comp[, "Overflow"] <- sum(MicLoss[,"C"])/grid.size
+    Resp.comp[, "Maint"] <- sum(Enzyme_Maint) + sum(Uptake_Maint)
+    Resp.comp[, "Growth"] <- sum(Taxon_Uptake_C*(1-CUE))
+    N.mineralization <- sum(MicLoss[,"N"])/grid.size
+    P.mineralization <- sum(MicLoss[,"P"])/grid.size
+    
     # Sum microbes prior to reproduction
     Microbes.grid <- sum.grid(Microbes,Mic.names,grid.size)
     # Reset the vector of fungal locations
@@ -919,13 +896,17 @@ RunPulse <- function(
     
     # Record total pools for each time step
     RespSeries <- c(RespSeries,Respiration)
+    Resp.compSeries <- rbind(Resp.compSeries, Resp.comp)
     C.UptakeSeries <- rbind(C.UptakeSeries, Taxon_Uptake.grid[, "Taxon_Uptake_C"])
     N.UptakeSeries <- rbind(N.UptakeSeries, Taxon_Uptake.grid[, "Taxon_Uptake_N"])
     P.UptakeSeries <- rbind(P.UptakeSeries, Taxon_Uptake.grid[, "Taxon_Uptake_P"])
     N.MonomerUptakeSeries <- rbind(N.MonomerUptakeSeries, Monomer_Uptake.grid[, "N"])
+    Mic.growthSeries <- rbind(Mic.growthSeries, Mic.growth)
     Net.CUE_Series <- c(Net.CUE_Series, Net.CUE)
     C.MonomersSeries <- rbind(C.MonomersSeries, Monomers.grid1[,"C"])
     N.MonomersSeries <- rbind(N.MonomersSeries, Monomers.grid1[,"N"])
+    N.mineralSeries <- c(N.mineralSeries, N.mineralization)
+    P.mineralSeries <- c(P.mineralSeries, P.mineralization)
     NH4Series <- rbind(NH4Series, Monomers.grid1["NH4","N"])
     PO4Series <- rbind(PO4Series, Monomers.grid1["PO4","P"])
     EnzymesSeries <- rbind(EnzymesSeries,t(Enzymes.grid))
@@ -1027,16 +1008,20 @@ RunPulse <- function(
     "SubInput"=SubInput[1:n_substrates,],
     "CUE"=CUE.ref,
     "RespSeries"=RespSeries,
+    "Resp.compSeries"=Resp.compSeries,
     "C.UptakeSeries"=C.UptakeSeries,
     "N.UptakeSeries"=N.UptakeSeries,
     "P.UptakeSeries"=P.UptakeSeries,
     "N.MonomerUptakeSeries"=N.MonomerUptakeSeries,
+    "Mic.growthSeries"=Mic.growthSeries,
     "Net.CUE_Series"=Net.CUE_Series,
     "EnzymesSeries"=EnzymesSeries,
     "SubstratesSeries"=SubstratesSeries,
     "Cum_SubstrateSeries"=Cum_SubstrateSeries,
     "C.MonomersSeries"=C.MonomersSeries,            # Only for carbon
     "N.MonomersSeries"=N.MonomersSeries,
+    "N.mineralSeries"=N.mineralSeries,
+    "P.mineralSeries"=P.mineralSeries,
     "NH4Series"=NH4Series,
     "PO4Series"=PO4Series,
     "MicrobesSeries"=MicrobesSeries,
