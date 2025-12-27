@@ -311,6 +311,7 @@ RunPulse <- function(
   Mic.names <- rownames(Microbes[1:n_taxa, ])
   is.NH4 <- which(rownames(Monomers) == "NH4")
   is.PO4 <- which(rownames(Monomers) == "PO4")
+  is.Hemi <- which(rownames(Monomers) == "Hemicellulose")
   org <- which(rownames(Monomers) != c("NH4", "PO4"))
   mineral <- which(rownames(Monomers) == c("NH4", "PO4"))
   is.deadMic <- which(rownames(Substrates) == "DeadMic")
@@ -409,8 +410,10 @@ RunPulse <- function(
   Cum_Leaching_N <- 0
   Cum_Leaching_P <- 0
   EnzymesSeries <- t(Enzymes.grid[, "C"])
+  EnzProdSeries <- as.data.frame(matrix(0, ncol = n_enzymes, dimnames = list(NULL, Enz.names)))
   SubstratesSeries <- Substrates.grid[, "C"]
   Cum_SubstrateSeries <- colSums(Substrates.grid)
+  MonProdSeries <- as.data.frame(matrix(0, ncol = n_substrates, dimnames = list(NULL, Sub.names)))
   C.MonomersSeries <- Monomers.grid[, "C"]
   N.MonomersSeries <- Monomers.grid[, "N"]
   NH4Series <- Monomers.grid["NH4", "N"]
@@ -566,6 +569,10 @@ RunPulse <- function(
     Monomers[mineral, ] <- Monomers[mineral, ] + MonInput[mineral]*MonomerRatios[mineral, ]
     # Keep track of mass balance for inputs
     Cum_Monomer <- Cum_Monomer + colSums(as.vector(MonInput)*MonomerRatios)
+    
+    # Monomer production across grid
+    MonProd.grid <- colSums(matrix(DecayRates, ncol = n_substrates, byrow = TRUE, dimnames = list(NULL, Sub.names)))
+    
     
     # Recalculate Monomer stoichiometry after changes due to dead microbial biomass
     rsm <- rowSums(Monomers)
@@ -796,6 +803,7 @@ RunPulse <- function(
     EP.mat[, ] <- Taxon_Enzyme_Production[EP.index]
     Enzyme_Production <- colSums(EP.mat)
     
+    
     # Total enzyme carbon cost for each taxon
     ttep <- t(Taxon_Enzyme_Production)
     Enzyme_Maint <- colSums(ttep*EnzAttrib[, "Maint_cost"])
@@ -910,12 +918,21 @@ RunPulse <- function(
     Monomers1 <- Monomers # Snapshot of monomers before uptake
     Monomers <- Monomers - Monomer_Uptake
     
+    # C Overflow. Goes to respiration or dissolved organic matter. For the latter
+    # case, to avoid introducing a new substrate, we can put C overflow in xylose 
+    # (hemicellulose monomer)
+    if(params["DOC.overflow",] == 1){
+    
+       Monomers[is.Hemi, "C"] <- Monomers[is.Hemi, "C"] + sum(MicLoss[,"C"])/grid.size
+    
+    }else{Resp.comp[, "Overflow"] <- sum(MicLoss[,"C"])}
+    
+    
     # Rates of mineralization. Respiration is separated by components
-    Resp.comp[, "Overflow"] <- sum(MicLoss[,"C"])
     Resp.comp[, "Maint"] <- sum(Enzyme_Maint) + sum(Uptake_Maint)
     Resp.comp[, "Growth"] <- sum(Taxon_Uptake_C*(1-CUE))
-    N.mineralization <- sum(MicLoss[,"N"])/grid.size
-    P.mineralization <- sum(MicLoss[,"P"])/grid.size
+    N.mineralization <- sum(MicLoss[,"N"])
+    P.mineralization <- sum(MicLoss[,"P"])
     
     # Sum microbes prior to reproduction
     Microbes.grid <- sum.grid(Microbes,Mic.names,grid.size)
@@ -949,11 +966,13 @@ RunPulse <- function(
     Net.CUE <- Net.growth/sum(Taxon_Uptake.grid[exclude, "Taxon_Uptake_C"])
     
     # Sum pools across grid
-    Respiration <- sum(Taxon_Uptake_C*(1-CUE)) + sum(Enzyme_Maint) + sum(Uptake_Maint) + sum(MicLoss[,"C"])
+    Respiration <- sum(Taxon_Uptake_C*(1-CUE)) + sum(Enzyme_Maint) + sum(Uptake_Maint) + Resp.comp[, "Overflow"]
     Monomers.grid <- sum.grid(Monomers, Mon.names, grid.size)
     Monomers.grid1 <- sum.grid(Monomers1, Mon.names, grid.size)
     Enzymes.grid <- sum.grid(Enzymes, Enz.names, grid.size)
     Substrates.grid <- sum.grid(Substrates, Sub.names, grid.size)
+    
+    Enzyme_Production.grid <- colSums(matrix(Enzyme_Production, ncol = n_enzymes, byrow = TRUE, dimnames = list(NULL, Enz.names)))
     
     # Update monomer leaching
     Leaching_N <- Monomers.grid["NH4","N"]*params["Leaching",]*exp(params["Psi.slope.leach",]*Psi[i_t])
@@ -973,6 +992,7 @@ RunPulse <- function(
     N.MonomerUptakeSeries <- rbind(N.MonomerUptakeSeries, Monomer_Uptake.grid[, "N"])
     Mic.growthSeries <- rbind(Mic.growthSeries, Mic.growth)
     Net.CUE_Series <- c(Net.CUE_Series, Net.CUE)
+    MonProdSeries <- rbind(MonProdSeries, MonProd.grid)
     C.MonomersSeries <- rbind(C.MonomersSeries, Monomers.grid1[,"C"])
     N.MonomersSeries <- rbind(N.MonomersSeries, Monomers.grid1[,"N"])
     N.mineralSeries <- c(N.mineralSeries, N.mineralization)
@@ -980,6 +1000,7 @@ RunPulse <- function(
     NH4Series <- rbind(NH4Series, Monomers.grid1["NH4","N"])
     PO4Series <- rbind(PO4Series, Monomers.grid1["PO4","P"])
     EnzymesSeries <- rbind(EnzymesSeries,t(Enzymes.grid))
+    EnzProdSeries <- rbind(EnzProdSeries, Enzyme_Production.grid)
     SubstratesSeries <- rbind(SubstratesSeries,Substrates.grid[,"C"])
     Cum_SubstrateSeries <- rbind(Cum_SubstrateSeries, colSums(Substrates.grid))
     MicrobesSeries <- rbind(MicrobesSeries,Microbes.grid[,"C"])
@@ -1086,8 +1107,10 @@ RunPulse <- function(
     "Mic.growthSeries"=Mic.growthSeries,
     "Net.CUE_Series"=Net.CUE_Series,
     "EnzymesSeries"=EnzymesSeries,
+    "EnzProdSeries"=EnzProdSeries,
     "SubstratesSeries"=SubstratesSeries,
     "Cum_SubstrateSeries"=Cum_SubstrateSeries,
+    "MonProdSeries"=MonProdSeries,
     "C.MonomersSeries"=C.MonomersSeries,            # Only for carbon
     "N.MonomersSeries"=N.MonomersSeries,
     "N.mineralSeries"=N.mineralSeries,
@@ -1277,13 +1300,13 @@ TraitModel <- function(job.time,task.ID){
   ReqEnz3 <- ReqEnz[,,1][1:params["n_substrates",],]
   rownames(ReqEnz3) <- rownames(substrates.frame)
   colSums(ReqEnz3) == 1 # Checking that each enzyme degrades only one substrate
-  Subs.track <- data.frame(C = c(0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0), # Defining which substrates tracks which elements
+  Subs.track <- data.frame(C = c(0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0), # Defining which substrates tracks which elements
                            N = c(1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0),
                            P = c(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1), 
                            row.names = rownames((substrates.frame)))
   Enz.track <- t(Subs.track[rep(rownames(ReqEnz3), params["n_enzymes",])[c(ReqEnz3 == 1)],]) # Table of element that regulates induced production of each enzyme
   colnames(Enz.track) <- colnames(ReqEnz3)
-  Subs.track.look <- data.frame(element = c("NP", "N", "C", "C", "C", "N", "N", "N", "N", "N", "P", "P"),
+  Subs.track.look <- data.frame(element = c("NP", "N", "C", "C", "C", "CN", "CN", "CN", "CN", "CN", "P", "P"),
                                 row.names = rownames((substrates.frame)))
   Enz.track.look <- as.vector(t(Subs.track.look[rep(rownames(ReqEnz3), params["n_enzymes",])[c(ReqEnz3 == 1)],]))
   names(Enz.track.look) <- colnames(ReqEnz3)
