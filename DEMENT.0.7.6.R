@@ -1500,11 +1500,19 @@ if(params["n_taxa",] == 100){
   
 }
   
-if(params["n_taxa",] == 1){
+if(params["n_taxa",] == 1 & params["Org.recycl",] == 1){
   
   EnzGenes <- matrix(ncol = n_genes, nrow = params["n_taxa",], dimnames = list(sprintf("%s%03d", "Tax", 1:params["n_taxa",]), 
                                                                                sprintf("%s%03d","Enz",1:n_genes)))
   EnzGenes[1,] <- rep(1, 12)
+  
+}
+  
+if(params["n_taxa",] == 1 & params["Org.recycl",] == 0){
+  
+  EnzGenes <- matrix(ncol = n_genes, nrow = params["n_taxa",], dimnames = list(sprintf("%s%03d", "Tax", 1:params["n_taxa",]), 
+                                                                               sprintf("%s%03d","Enz",1:n_genes)))
+  EnzGenes[1,] <- c(0, 0, rep(1, 10))
   
 }
   
