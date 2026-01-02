@@ -311,7 +311,7 @@ RunPulse <- function(
   Mic.names <- rownames(Microbes[1:n_taxa, ])
   is.NH4 <- which(rownames(Monomers) == "NH4")
   is.PO4 <- which(rownames(Monomers) == "PO4")
-  is.Hemi <- which(rownames(Monomers) == "Hemicellulose")
+  is.Hemi <- which(rownames(Monomers) == "Mon004")
   org <- which(rownames(Monomers) != c("NH4", "PO4"))
   mineral <- which(rownames(Monomers) == c("NH4", "PO4"))
   is.deadMic <- which(rownames(Substrates) == "DeadMic")
